@@ -1,0 +1,34 @@
+1. I compare 32bit vs 64bit word2vec.
+32bit applications are much slower than 64bit ones.
+So I only include 64bit applications in the following part.
+
+
+2. I compare the following two BLAS.
+(1)Netlib BLAS pre-built libraries, x86 and x86_64
+   downloaded from http://cs2.swfc.edu.cn/~zyl/?p=816
+   They are compiled by intel fortran and visual c++ compilers, so they are only for visual c++.
+(2)OpenBLAS 0.2.11, x86 and x86_64
+   They are compiled by mingw64(gcc and gfortran) under MSYS2.
+The latter is faster. I ignore the first one.
+
+
+3. 1 thread vs 4 threads, none-BLAS vs BLAS
+1 thread
+command:
+    time ./word2vec -train text8 -output vectors.bin -cbow 0 -size 200 -window 5 -negative 0 -hs 1 -sample 1e-3 -threads 1 -binary 1
+Words/thread/sec    compiler            blas
+26-27k              vc2012 64bit        none
+54-55k              vc2012 64bit        OpenBLAS-v0.2.11-Win64
+22-23k              mingw64 gcc 4.9.1   none
+34-36k              mingw64 gcc 4.9.1   OpenBLAS-v0.2.11-Win64
+
+4 thread
+command:
+    time ./word2vec -train text8 -output vectors.bin -cbow 0 -size 200 -window 5 -negative 0 -hs 1 -sample 1e-3 -threads 4 -binary 1
+Words/thread/sec    compiler            blas
+61-62k              vc2012 64bit        none
+89-92k              vc2012 64bit        OpenBLAS-v0.2.11-Win64
+45-46k              mingw64 gcc 4.9.1   none
+84-86k              mingw64 gcc 4.9.1   OpenBLAS-v0.2.11-Win64
+
+

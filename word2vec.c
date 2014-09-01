@@ -22,6 +22,7 @@
 #else
 # include <pthread.h>
 #endif
+#include "blas.h"
 
 #define MAX_STRING 100
 #define EXP_TABLE_SIZE 1000
@@ -368,6 +369,7 @@ void *TrainModelThread(void *id) {
   long long l1, l2, c, target, label;
   unsigned long long next_random = (long long)id;
   real f, g;
+  const real zero = 0.0f;
   clock_t now;
   real *neu1 = (real *)calloc(layer1_size, sizeof(real));
   real *neu1e = (real *)calloc(layer1_size, sizeof(real));
@@ -378,9 +380,10 @@ void *TrainModelThread(void *id) {
       word_count_actual += word_count - last_word_count;
       last_word_count = word_count;
       if ((debug_mode > 1)) {
-        now=clock();
-        printf("%cAlpha: %f  Progress: %.2f%%  Words/thread/sec: %.2fk  ", 13, alpha,
+        now = clock();
+        printf("%cAlpha: %f  Progress: %.2f%%  %.2fk Words  Words/thread/sec: %.2fk  ", 13, alpha,
           word_count_actual / (real)(train_words + 1) * 100,
+          word_count_actual / (real)1000,
           word_count_actual / ((real)(now - start + 1) / (real)CLOCKS_PER_SEC * 1000));
         fflush(stdout);
       }
@@ -410,8 +413,8 @@ void *TrainModelThread(void *id) {
     if (word_count > train_words / num_threads) break;
     word = sen[sentence_position];
     if (word == -1) continue;
-    for (c = 0; c < layer1_size; c++) neu1[c] = 0;
-    for (c = 0; c < layer1_size; c++) neu1e[c] = 0;
+    scopy(layer1_size, &zero, 0, neu1, 1);
+    scopy(layer1_size, &zero, 0, neu1e, 1);
     next_random = next_random * (unsigned long long)25214903917 + 11;
     b = next_random % window;
     if (cbow) {  //train the cbow architecture
@@ -422,22 +425,22 @@ void *TrainModelThread(void *id) {
         if (c >= sentence_length) continue;
         last_word = sen[c];
         if (last_word == -1) continue;
-        for (c = 0; c < layer1_size; c++) neu1[c] += syn0[c + last_word * layer1_size];
+        saxpy(layer1_size, 1.0f, syn0 + last_word * layer1_size, 1, neu1, 1);
       }
       if (hs) for (d = 0; d < vocab[word].codelen; d++) {
-        f = 0;
         l2 = vocab[word].point[d] * layer1_size;
         // Propagate hidden -> output
-        for (c = 0; c < layer1_size; c++) f += neu1[c] * syn1[c + l2];
+        f = sdot(layer1_size, neu1, 1, syn1 + l2, 1);
+
         if (f <= -MAX_EXP) continue;
         else if (f >= MAX_EXP) continue;
         else f = expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
         // 'g' is the gradient multiplied by the learning rate
         g = (1 - vocab[word].code[d] - f) * alpha;
         // Propagate errors output -> hidden
-        for (c = 0; c < layer1_size; c++) neu1e[c] += g * syn1[c + l2];
+        saxpy(layer1_size, g, syn1 + l2, 1, neu1e, 1);
         // Learn weights hidden -> output
-        for (c = 0; c < layer1_size; c++) syn1[c + l2] += g * neu1[c];
+        saxpy(layer1_size, g, neu1, 1, syn1 + l2, 1);
       }
       // NEGATIVE SAMPLING
       if (negative > 0) for (d = 0; d < negative + 1; d++) {
@@ -452,13 +455,12 @@ void *TrainModelThread(void *id) {
           label = 0;
         }
         l2 = target * layer1_size;
-        f = 0;
-        for (c = 0; c < layer1_size; c++) f += neu1[c] * syn1neg[c + l2];
+        f = sdot(layer1_size, neu1, 1, syn1neg + l2, 1);
         if (f > MAX_EXP) g = (label - 1) * alpha;
         else if (f < -MAX_EXP) g = (label - 0) * alpha;
         else g = (label - expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;
-        for (c = 0; c < layer1_size; c++) neu1e[c] += g * syn1neg[c + l2];
-        for (c = 0; c < layer1_size; c++) syn1neg[c + l2] += g * neu1[c];
+        saxpy(layer1_size, g, syn1neg + l2, 1, neu1e, 1);
+        saxpy(layer1_size, g, neu1, 1, syn1neg + l2, 1);
       }
       // hidden -> in
       for (a = b; a < window * 2 + 1 - b; a++) if (a != window) {
@@ -467,7 +469,7 @@ void *TrainModelThread(void *id) {
         if (c >= sentence_length) continue;
         last_word = sen[c];
         if (last_word == -1) continue;
-        for (c = 0; c < layer1_size; c++) syn0[c + last_word * layer1_size] += neu1e[c];
+        saxpy(layer1_size, 1.0f, neu1e, 1, syn0 + last_word * layer1_size, 1);
       }
     } else {  //train skip-gram
       for (a = b; a < window * 2 + 1 - b; a++) if (a != window) {
@@ -480,19 +482,18 @@ void *TrainModelThread(void *id) {
         for (c = 0; c < layer1_size; c++) neu1e[c] = 0;
         // HIERARCHICAL SOFTMAX
         if (hs) for (d = 0; d < vocab[word].codelen; d++) {
-          f = 0;
           l2 = vocab[word].point[d] * layer1_size;
           // Propagate hidden -> output
-          for (c = 0; c < layer1_size; c++) f += syn0[c + l1] * syn1[c + l2];
+          f = sdot(layer1_size, syn0 + l1, 1, syn1 + l2, 1);
           if (f <= -MAX_EXP) continue;
           else if (f >= MAX_EXP) continue;
           else f = expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
           // 'g' is the gradient multiplied by the learning rate
           g = (1 - vocab[word].code[d] - f) * alpha;
           // Propagate errors output -> hidden
-          for (c = 0; c < layer1_size; c++) neu1e[c] += g * syn1[c + l2];
+          saxpy(layer1_size, g, syn1 + l2, 1, neu1e, 1);
           // Learn weights hidden -> output
-          for (c = 0; c < layer1_size; c++) syn1[c + l2] += g * syn0[c + l1];
+          saxpy(layer1_size, g, syn0 + l1, 1, syn1 + l2, 1);
         }
         // NEGATIVE SAMPLING
         if (negative > 0) for (d = 0; d < negative + 1; d++) {
@@ -507,16 +508,15 @@ void *TrainModelThread(void *id) {
             label = 0;
           }
           l2 = target * layer1_size;
-          f = 0;
-          for (c = 0; c < layer1_size; c++) f += syn0[c + l1] * syn1neg[c + l2];
+          f = sdot(layer1_size, syn0 + l1, 1, syn1neg + l2, 1);
           if (f > MAX_EXP) g = (label - 1) * alpha;
           else if (f < -MAX_EXP) g = (label - 0) * alpha;
           else g = (label - expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;
-          for (c = 0; c < layer1_size; c++) neu1e[c] += g * syn1neg[c + l2];
-          for (c = 0; c < layer1_size; c++) syn1neg[c + l2] += g * syn0[c + l1];
+          saxpy(layer1_size, g, syn1neg + l2, 1, neu1e, 1);
+          saxpy(layer1_size, g, syn0 + l1, 1, syn1neg + l2, 1);
         }
         // Learn weights input -> hidden
-        for (c = 0; c < layer1_size; c++) syn0[c + l1] += neu1e[c];
+        saxpy(layer1_size, 1.0f, neu1e, 1, syn0 + l1, 1);
       }
     }
     sentence_position++;
