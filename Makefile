@@ -1,13 +1,6 @@
 CC = gcc
 CFLAGS = -O2 -Wall -funroll-loops
-TARGET = Win64
-ifeq ($(TARGET),Win32)
-	BLAS = OpenBLAS-v0.2.11-Win32/lib/libopenblas.dll.a
-else ifeq ($(TARGET),Win64)
-	BLAS = OpenBLAS-v0.2.11-Win64/lib/libopenblas.dll.a
-else
-	BLAS = $(error invalid TARGET, TARGET can be "Win32/Win64")
-endif
+BLAS = OpenBLAS-x86_64-sandybridge-st/lib/libopenblas.a
 
 all: word2vec word2phrase distance word-analogy compute-accuracy
 word2vec : word2vec.c
